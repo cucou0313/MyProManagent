@@ -10,37 +10,44 @@ import time
 import traceback
 import uuid
 
-import Conf.conf
+from Conf.conf import task_queue, listen_interval
 from Models.MyModel import DBSession, OperateLog
 from sqlalchemy.sql import func
+from utils.mylogger import get_logger
+
+logger = get_logger("listen")
 
 
 def listen_data():
+    """
+    1. 持续监听mysql入库日志
+    2. 将其中 完成标识的 任务放入 task_queue队列
+    """
     session = DBSession()
-    print "start to listen..."
+    logger.info("start to listen...")
     # 获取当前最新id
     id = session.query(func.max(OperateLog.id)).first()[0]
-    print "id", id
+    logger.debug("从 id 开始: %d" % id)
 
     while True:
         try:
             # 每十秒取最新时间段内的数据
-            time.sleep(10)
+            time.sleep(listen_interval)
             # 每次查询前更新session缓存
             session.commit()
             res = session.query(OperateLog).filter(OperateLog.id > id).all()
-            print time.strftime("%Y-%m-%d %H:%M:%S"), "新入数据:%d" % len(res)
+            logger.debug("新入数据:%d" % len(res))
             id = id + len(res)
-            print "id", id
+            logger.debug("当前id: %d" % id)
 
             for row in res:
                 print row.to_dict()
-                Conf.conf.task_queue.put(row.task_id)
-                print Conf.conf.task_queue.queue
+                task_queue.put(row.task_id)
+                print task_queue.queue
                 # print row.user.user_name
                 # print row.operate_type.type_name
         except Exception as e:
-            print traceback.format_exc()
+            logger.error(traceback.format_exc())
 
 
 if __name__ == '__main__':

@@ -7,7 +7,7 @@
 5. 检测模块从task_queue获取工作
 6. 检测结果存入数据库
 
-![Image text](pic/project.png)
+![流程图](pic/project.png)
 
 ## requires
 1. pip install sqlalchemy
