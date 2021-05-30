@@ -22,10 +22,12 @@ mysql_db_name = "myprocmanager"
 MYSQL_SETTING = "mysql://{user}:{psw}@{host}:{port}/{name}?charset=utf8".format(
     user=mysql_db_user, psw=mysql_db_psw, host=mysql_host, port=3306, name=mysql_db_name)
 
-# 检测任务队列
+# 检测任务队列,线程并发模式,进程不能直接对queue进行内存共享
 task_queue = Queue()
+# 并行线程数量
+workers_num = 2
 # 监听日志间隔
-listen_interval = 10
+listen_interval = 5
 
 # log
 # 日志级别

@@ -12,3 +12,4 @@
 ## requires
 1. pip install sqlalchemy
 2. pip install pymysql
+3. pip install futures

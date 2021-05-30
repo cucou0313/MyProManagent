@@ -14,14 +14,26 @@ from Models.MyModel import DBSession, OperateLog, User, OperateType
 
 
 def create_log():
+    """
+    E1开始  E8结束
+    """
     session = DBSession()
 
     task_id = str(uuid.uuid4())
     count = random.randint(10, 30)
+
+    operate_list = (2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20)
     print "本次预计生成 %d 条数据" % count
     for i in range(count):
         log_id = str(uuid.uuid4())
-        operate_type = "E%d" % random.randint(1, 15)
+
+        if i == 0:
+            operate_type = "E1"
+        elif i == count - 1:
+            operate_type = "E8"
+        else:
+            operate_type = "E%d" % random.choice(operate_list)
+
         datetime = time.strftime("%Y-%m-%d %H:%M:%S")
         user_id = random.randint(1, 3)
         file_id = str(uuid.uuid4()) if random.randint(1, 5) == 1 else ""

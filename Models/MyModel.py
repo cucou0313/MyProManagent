@@ -63,9 +63,11 @@ class CheckRes(BaseModel):
     __tablename__ = 'check_res'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(36))
     content = Column(Text)
     operate_log_id = Column(Integer, ForeignKey('operate_log.id'))
     operate_log = relationship("OperateLog", backref="detail_of_operate_log")
+    # 检测上报时间点
     datetime = Column(TIMESTAMP)
 
     def to_dict(self):  # 将读取的数据和转化成字典
