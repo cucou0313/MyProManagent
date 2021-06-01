@@ -6,6 +6,7 @@ Create time: 2021-05-26 20:50
 IDE: PyCharm
 """
 import os
+import threading
 from Queue import Queue
 
 # MySql
@@ -28,6 +29,14 @@ task_queue = Queue()
 workers_num = 2
 # 监听日志间隔
 listen_interval = 5
+
+# 检测规则包
+check_rules = None
+# 监听使用,负责卷宗业务的整体超时检测
+task_map = {}
+task_map_lock = threading.Lock
+# 超时时间
+overtime = 24 * 60
 
 # log
 # 日志级别

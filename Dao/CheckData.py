@@ -5,7 +5,11 @@ Author: guokaikuo
 Create time: 2021-05-28 20:31
 IDE: PyCharm
 """
+import json
 import sys
+from datetime import datetime
+
+from Dao.ListenData import rules_init
 
 reload(sys)
 sys.setdefaultencoding('utf8')
@@ -19,13 +23,13 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 
-from Conf.conf import task_queue, workers_num
+from Conf import conf
 from utils.mylogger import get_logger
 from Models.MyModel import DBSession, OperateLog, CheckRes
 
 logger = get_logger("check")
 
-executor = ThreadPoolExecutor(max_workers=workers_num)
+executor = ThreadPoolExecutor(max_workers=conf.workers_num)
 
 session = DBSession()
 
@@ -41,6 +45,7 @@ def check(task_id):
     try:
         # 获取该卷宗的所有关联日志
         session.commit()
+        time.sleep(0.1)
         res = session.query(OperateLog).filter(OperateLog.task_id == task_id).all()
         assert len(res), "卷宗 %s 无法获取关联日志." % task_id
 
@@ -71,7 +76,7 @@ def check(task_id):
             if log["file_id"]:
                 if not file_map.get(log["file_id"]):
                     file_map[log["file_id"]] = []
-                file_map[log["file_id"]] += [row.type]
+                file_map[log["file_id"]].append(row.type)
 
         log_list_len = len(log_list)
         logger.info("卷宗 task_id:%s 包含 %d 日志" % (task_id, log_list_len))
@@ -79,89 +84,91 @@ def check(task_id):
         logger.info(operate_list)
 
         # ----------------------------检测逻辑----------------------------
+        if not conf.check_rules:
+            logger.info("当前没有检测规则.")
+            return error_list
 
-        # >>>>>>>>>>>>>>>>>1. 检测文件操作完整性
-        # r1: IF 存在文件（file_id）AND [未通过清晰度检查（E15） OR 完整性检查（E16） OR 一致性检查（E17）]
-        # THEN 提取上传该文件的日志，输出卷宗号(task_id)，时间，哪步检查未通过等
-        logger.info(">>>>>>>>>>>>>>>>>1. 检测文件操作完整性")
-        logger.info("卷宗 %s 存在 %d 个文件" % (task_id, len(file_map)))
-        for file_id in file_map:
-            b, r = compare_list(file_map[file_id], ["E15", "E16", "E17"])
+        # >>>>>>>>>>>>>>>>>1. 头尾检测
+        logger.info(">>>>>>>>>>>>>>>>>1. 头尾检测")
+        head = conf.check_rules.get("1", {}).get("head", [])
+        tail = conf.check_rules.get("1", {}).get("tail", [])
+        if head and log_list[0].get("type") not in head:
+            log_list[0]["error"] = "头检测错误,第一个操作:%s,应为:%s" % (
+                log_list[0].get("type"), head
+            )
+            error_list.append(build_err_json(log_list[0]))
+        if tail and log_list[-1].get("type") not in tail:
+            log_list[-1]["error"] = "尾检测错误,最后一个操作:%s,应为:%s" % (
+                log_list[-1].get("type"), tail
+            )
+            error_list.append(build_err_json(log_list[-1]))
+
+        # >>>>>>>>>>>>>>>>>2. 完整性检测
+        logger.info(">>>>>>>>>>>>>>>>>2. 完整性检测")
+        overall_include = conf.check_rules.get("2", [])
+        if overall_include:
+            b, r = compare_list(operate_list, overall_include)
             # 不包含且存在缺少项
             if not b and r:
-                for t in r:
+                error_list.append(build_err_json({
+                    "task_id": task_id,
+                    "error": "完整性检测错误,缺少操作:%s" % r
+                }))
+
+        # >>>>>>>>>>>>>>>>>3. 文件检测
+        logger.info(">>>>>>>>>>>>>>>>>3. 文件检测")
+        logger.info("卷宗 %s 存在 %d 个文件" % (task_id, len(file_map)))
+        file_include = conf.check_rules.get("3", [])
+        if file_include:
+            for file_id in file_map:
+                b, r = compare_list(file_map[file_id], file_include)
+                # 不包含且存在缺少项
+                if not b and r:
                     error_list.append(build_err_json({
                         "task_id": task_id,
-                        "error": "文件 %s 缺少操作%s" % (file_id, t)
+                        "error": "文件 %s 检测错误,缺少操作:%s" % (file_id, r)
                     }))
 
-        # >>>>>>>>>>>>>>>>>2. 检测操作头
-        # r4: IF 第一个操作为创建卷宗（E1） THEN 正确
-        logger.info(">>>>>>>>>>>>>>>>>2. 检测操作头")
-        if log_list[0].get("type") != "E1":
-            log_list[0]["error"] = "第一个操作:{type},应为创建卷宗（E1）".format(**log_list[0])
-            error_list.append(build_err_json(log_list[0]))
+        # >>>>>>>>>>>>>>>>>4. 上下文顺序检测
+        logger.info(">>>>>>>>>>>>>>>>>4. 上下文顺序检测")
+        context = conf.check_rules.get("4", [])
+        if context:
+            for index in range(log_list_len - 1):
+                log = log_list[index]
+                next_log = log_list[index + 1]
+                error = ""
 
-        # >>>>>>>>>>>>>>>>>3. 检测操作间
-        logger.info(">>>>>>>>>>>>>>>>>3. 检测操作间")
-        for index in range(1, log_list_len - 1):
-            log = log_list[index]
-            next_log = log_list[index + 1]
-            error = ""
+                for each_ct in context:
+                    context_pre = each_ct.get("context_pre", [])
+                    context_back = each_ct.get("context_back", [])
+                    if not context_pre or not context_back:
+                        break
 
-            # r5: IF 创建卷宗（E1）
-            # AND [上传文件（E9） OR 阅读文件（E10）OR 修改文件（E11）OR 重新上传（E12）OR 删除文件（E13）] THEN 正确
-            if log["type"] == "E1":
-                if next_log["type"] not in ("E9", "E10", "E11", "E12", "E13"):
-                    error = "流程错误,%s->%s" % (log["type"], next_log["type"])
+                    if log["type"] in context_pre and \
+                            next_log["type"] not in context_back:
+                        error = "上下文顺序检测错误,%s->%s" % (log["type"], next_log["type"])
 
-            # r8: IF 移送卷宗（E3） THEN 接收卷宗（E4）正确
-            if log["type"] == "E3":
-                if next_log["type"] != "E4":
-                    error = "流程错误,%s->%s" % (log["type"], next_log["type"])
+                if error:
+                    log["error"] = error
+                    error_list.append(build_err_json(log))
 
-            # r9: IF 接收卷宗（E4）
-            # THEN  [上传文件（E9） OR 阅读文件（E10）OR 修改文件（E11）OR 重新上传（E12）OR 删除文件（E13）]
-            # r14: IF接收卷宗（E4）
-            # THEN 卷宗权限管理（E5） OR 模板选择（E6）OR 移送下一办理人（E18）
-            if log["type"] == "E4":
-                if next_log["type"] not in ("E5", "E6", "E18", "E9", "E10", "E11", "E12", "E13"):
-                    error = "流程错误,%s->%s" % (log["type"], next_log["type"])
-
-            # r6: IF [上传文件（E9） OR 阅读文件（E10）OR 修改文件（E11）OR 重新上传（E12）OR 删除文件（E13）]
-            # THEN [上传文件（E9） OR 阅读文件（E10）OR 修改文件（E11）OR 重新上传（E12）OR 删除文件（E13）]
-            # r7: IF [上传文件（E9） OR 阅读文件（E10）OR 修改文件（E11）OR 重新上传（E12）OR 删除文件（E13）]
-            # THEN 移送卷宗（E3）
-            # r10: IF [上传文件（E9） OR 阅读文件（E10）OR 修改文件（E11）OR 重新上传（E12）OR 删除文件（E13）]
-            # THEN 不受理案件（E19） OR 受理案件（E20）
-            # r13: IF [上传文件（E9） OR 阅读文件（E10）OR 修改文件（E11）OR 重新上传（E12）OR 删除文件（E13）]
-            # THEN 卷宗权限管理（E5） OR 模板选择（E6）OR 移送下一办理人（E18）
-            if log["type"] in ("E9", "E10", "E11", "E12", "E13"):
-                if next_log["type"] not in ("E3", "E9", "E10", "E11", "E12", "E13", "E19", "E20", "E5", "E6", "E18"):
-                    error = "流程错误,%s->%s" % (log["type"], next_log["type"])
-
-            # r12: IF受理案件（E20）
-            # THEN [上传文件（E9） OR 阅读文件（E10）OR 修改文件（E11）OR 重新上传（E12）OR 删除文件（E13）]
-            if log["type"] == "E20":
-                if next_log["type"] not in ("E9", "E10", "E11", "E12", "E13"):
-                    error = "流程错误,%s->%s" % (log["type"], next_log["type"])
-
-            # r15: IF卷宗权限管理（E5） OR 模板选择（E6）OR 移送下一办理人（E18）
-            # THEN 移送卷宗（E3）
-            if log["type"] in ("E5", "E6", "E18"):
-                if next_log["type"] != "E3":
-                    error = "流程错误,%s->%s" % (log["type"], next_log["type"])
-
-            if error:
-                log["error"] = error
-                error_list.append(build_err_json(log))
-
-        # >>>>>>>>>>>>>>>>>4. 检测操作尾
-        # r16: IF 最后一个操作为卷宗结案（E8） THEN 正确
-        logger.info(">>>>>>>>>>>>>>>>>4. 检测操作尾")
-        if log_list[-1].get("type") != "E8":
-            log_list[-1]["error"] = "最后一个操作:{type},应为卷宗结案（E8）".format(**log_list[-1])
-            error_list.append(build_err_json(log_list[-1]))
+        # >>>>>>>>>>>>>>>>>5. 局部时限检测
+        logger.info(">>>>>>>>>>>>>>>>>5. 局部时限检测")
+        part_info = conf.check_rules.get("5", [])
+        if part_info:
+            for each_part in part_info:
+                part = each_part.get("part", [])
+                partial_time = each_part.get("partial_time", 0)
+                if part and partial_time > 0:
+                    part_res = get_part(operate_list, part)
+                    if part_res:
+                        # 每一对局部首位 索引
+                        for each_res in part_res:
+                            pre_log = log_list[each_res[0]]
+                            back_log = log_list[each_res[1]]
+                            if not time_diff(back_log["datetime"], pre_log["datetime"], partial_time):
+                                back_log["error"] = "局部时限检测错误,该操作超出设定时限:%dm" % partial_time
+                                error_list.append(build_err_json(back_log))
 
         return error_list
     except Exception as e:
@@ -198,10 +205,10 @@ def tasks_assign():
     while True:
         try:
             job_list = []
-            if task_queue.qsize():
-                logger.info("task_queue.qsize():%d" % task_queue.qsize())
-                for _ in range(task_queue.qsize()):
-                    x = task_queue.get_nowait()
+            if conf.task_queue.qsize():
+                logger.info("task_queue.qsize():%d" % conf.task_queue.qsize())
+                for _ in range(conf.task_queue.qsize()):
+                    x = conf.task_queue.get_nowait()
                     job_list.append(x)
                 for id in job_list:
                     future = executor.submit(check, id)
@@ -245,6 +252,68 @@ def compare_list(main, must):
     return False, miss_list
 
 
+def time_diff(time1, time2, limit):
+    """
+    计算 两个时间差 是否在时限内
+    """
+    try:
+        assert limit > 0, "limit value error."
+        time_1_struct = datetime.strptime(time1, "%Y-%m-%d %H:%M:%S")
+        time_2_struct = datetime.strptime(time2, "%Y-%m-%d %H:%M:%S")
+        total_seconds = (time_2_struct - time_1_struct).total_seconds()
+        minutes = int(total_seconds / 60)
+        if minutes <= limit:
+            return True
+        return False
+    except Exception, e:
+        logger.error(traceback.format_exc())
+        return False
+
+
+def get_part(operate_list, part):
+    """
+    获取所有 操作列表中的符合条件的区域起点和结束 索引
+    """
+    try:
+        res = []
+        pre = part[0]
+        back = part[1]
+        # 先找到第一个元素的所有索引
+        pre_index_list = [x for x in range(len(operate_list)) if operate_list[x] == pre]
+        print "pre_index_list", pre_index_list
+        if len(pre_index_list) == 0:
+            return res
+        # 末尾追加None,表示最后一次查找到列表尾巴
+        pre_index_list.append(None)
+        print "pre_index_list append", pre_index_list
+        for i in range(len(pre_index_list) - 1):
+            index1 = pre_index_list[i]
+            index2 = pre_index_list[i + 1]
+            r = list_find(operate_list, back, index1, index2)
+            if r >= 0:
+                res.append([index1, r])
+        return res
+    except Exception, e:
+        traceback.print_exc()
+        return []
+
+
+def list_find(lt, target, start=None, stop=None):
+    """
+    list.index 方法在找不到元素时报ValueError
+    """
+    try:
+        if start and not stop:
+            res = lt.index(target, start)
+        elif start:
+            res = lt.index(target, start, stop)
+        else:
+            res = lt.index(target)
+        return res
+    except ValueError, e:
+        return -1
+
+
 if __name__ == '__main__':
     # tasks_assign()
     # content = "发现卷宗 {task_id} 在 {datetime},用户 {user_name} 的操作 {type}({type_name}) 存在错误:{error}"
@@ -260,16 +329,9 @@ if __name__ == '__main__':
     # }
     # print content.format(**log)
 
-    ls = []
-    for i in range(100):
-        log = {
-            "task_id": "%d" % random.randint(1, 50),
-            "error": "this is error %d" % i
-        }
-        ls.append(build_err_json(log))
-    # 批量写
-    session.execute(
-        CheckRes.__table__.insert(),
-        ls
-    )
-    session.commit()
+    # lll = ["E3", "E2", "E4", "E3", "E5", "E10", "E3", "E7", "E4", "E4"]
+    # print get_part(lll, ["E4", "E3"])
+
+    conf.check_rules = rules_init()
+    for err in check("1ab9d706-346e-4f41-a361-6d9961bdefcc"):
+        print json.dumps(err, ensure_ascii=False)

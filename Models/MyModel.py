@@ -20,6 +20,7 @@ DBSession = sessionmaker(bind=engine)  # 创建DBSession类型:类似数据库�
 BaseModel = declarative_base()
 
 
+# 操作日志
 class OperateLog(BaseModel):
     __tablename__ = 'operate_log'
 
@@ -39,6 +40,7 @@ class OperateLog(BaseModel):
         return {c.name: getattr(self, c.name, None) for c in self.__table__.columns}
 
 
+# 用户
 class User(BaseModel):
     __tablename__ = 'user'
 
@@ -49,6 +51,7 @@ class User(BaseModel):
         return {c.name: getattr(self, c.name, None) for c in self.__table__.columns}
 
 
+# 操作类型
 class OperateType(BaseModel):
     __tablename__ = 'operate_type'
 
@@ -59,6 +62,7 @@ class OperateType(BaseModel):
         return {c.name: getattr(self, c.name, None) for c in self.__table__.columns}
 
 
+# 检测结果
 class CheckRes(BaseModel):
     __tablename__ = 'check_res'
 
@@ -69,6 +73,46 @@ class CheckRes(BaseModel):
     operate_log = relationship("OperateLog", backref="detail_of_operate_log")
     # 检测上报时间点
     datetime = Column(TIMESTAMP)
+
+    def to_dict(self):  # 将读取的数据和转化成字典
+        return {c.name: getattr(self, c.name, None) for c in self.__table__.columns}
+
+
+# 检测规则包
+class CheckRule(BaseModel):
+    __tablename__ = 'check_rule'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    rule_type = Column(Integer, ForeignKey('rule_type.rule_type'))
+    rule_name = Column(String(256))
+
+    # 1、头尾
+    head = Column(Text)
+    tail = Column(Text)
+    # 2、整体完整
+    overall_include = Column(Text)
+    # 3、文件
+    file_include = Column(Text)
+    # 4、顺序
+    context_pre = Column(Text)
+    context_back = Column(Text)
+    # 5、区域时限
+    part = Column(Text)
+    partial_time = Column(Integer)
+
+    rule = relationship("RuleType", backref="rule_of_rule_type")
+    datetime = Column(TIMESTAMP)
+
+    def to_dict(self):  # 将读取的数据和转化成字典
+        return {c.name: getattr(self, c.name, None) for c in self.__table__.columns}
+
+
+# 检测规则的类型
+class RuleType(BaseModel):
+    __tablename__ = 'rule_type'
+
+    rule_type = Column(Integer, primary_key=True)
+    type_name = Column(String(32))
 
     def to_dict(self):  # 将读取的数据和转化成字典
         return {c.name: getattr(self, c.name, None) for c in self.__table__.columns}
