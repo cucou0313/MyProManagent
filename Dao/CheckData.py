@@ -9,7 +9,7 @@ import json
 import sys
 from datetime import datetime
 
-from Dao.ListenData import rules_init
+from Dao.RuleInit import rules_init, time_diff
 
 reload(sys)
 sys.setdefaultencoding('utf8')
@@ -89,6 +89,7 @@ def check(task_id):
             return error_list
 
         # >>>>>>>>>>>>>>>>>1. 头尾检测
+        ht_count = 0
         logger.info(">>>>>>>>>>>>>>>>>1. 头尾检测")
         head = conf.check_rules.get("1", {}).get("head", [])
         tail = conf.check_rules.get("1", {}).get("tail", [])
@@ -96,42 +97,52 @@ def check(task_id):
             log_list[0]["error"] = "头检测错误,第一个操作:%s,应为:%s" % (
                 log_list[0].get("type"), head
             )
+            ht_count += 1
             error_list.append(build_err_json(log_list[0]))
         if tail and log_list[-1].get("type") not in tail:
             log_list[-1]["error"] = "尾检测错误,最后一个操作:%s,应为:%s" % (
                 log_list[-1].get("type"), tail
             )
+            ht_count += 1
             error_list.append(build_err_json(log_list[-1]))
+        logger.info(">>>>>>>>>>>>>>>>>1. 头尾检测结束,共%d 错误." % ht_count)
 
         # >>>>>>>>>>>>>>>>>2. 完整性检测
         logger.info(">>>>>>>>>>>>>>>>>2. 完整性检测")
+        oa_count = 0
         overall_include = conf.check_rules.get("2", [])
         if overall_include:
             b, r = compare_list(operate_list, overall_include)
             # 不包含且存在缺少项
             if not b and r:
+                oa_count += 1
                 error_list.append(build_err_json({
                     "task_id": task_id,
                     "error": "完整性检测错误,缺少操作:%s" % r
                 }))
+        logger.info(">>>>>>>>>>>>>>>>>2. 完整性检测结束,共%d 错误." % oa_count)
 
         # >>>>>>>>>>>>>>>>>3. 文件检测
         logger.info(">>>>>>>>>>>>>>>>>3. 文件检测")
         logger.info("卷宗 %s 存在 %d 个文件" % (task_id, len(file_map)))
+        fi_count = 0
         file_include = conf.check_rules.get("3", [])
         if file_include:
             for file_id in file_map:
                 b, r = compare_list(file_map[file_id], file_include)
                 # 不包含且存在缺少项
                 if not b and r:
+                    fi_count += 1
                     error_list.append(build_err_json({
                         "task_id": task_id,
                         "error": "文件 %s 检测错误,缺少操作:%s" % (file_id, r)
                     }))
+        logger.info(">>>>>>>>>>>>>>>>>3. 文件检测结束,共%d 错误." % fi_count)
 
         # >>>>>>>>>>>>>>>>>4. 上下文顺序检测
         logger.info(">>>>>>>>>>>>>>>>>4. 上下文顺序检测")
         context = conf.check_rules.get("4", [])
+        ct_count = 0
         if context:
             for index in range(log_list_len - 1):
                 log = log_list[index]
@@ -150,11 +161,14 @@ def check(task_id):
 
                 if error:
                     log["error"] = error
+                    ct_count += 1
                     error_list.append(build_err_json(log))
+        logger.info(">>>>>>>>>>>>>>>>>4. 上下文顺序检测结束,共%d 错误." % ct_count)
 
         # >>>>>>>>>>>>>>>>>5. 局部时限检测
         logger.info(">>>>>>>>>>>>>>>>>5. 局部时限检测")
         part_info = conf.check_rules.get("5", [])
+        pi_count = 0
         if part_info:
             for each_part in part_info:
                 part = each_part.get("part", [])
@@ -166,9 +180,11 @@ def check(task_id):
                         for each_res in part_res:
                             pre_log = log_list[each_res[0]]
                             back_log = log_list[each_res[1]]
-                            if not time_diff(back_log["datetime"], pre_log["datetime"], partial_time):
+                            if not time_diff(str(back_log["datetime"]), str(pre_log["datetime"]), partial_time):
                                 back_log["error"] = "局部时限检测错误,该操作超出设定时限:%dm" % partial_time
+                                pi_count += 1
                                 error_list.append(build_err_json(back_log))
+        logger.info(">>>>>>>>>>>>>>>>>5. 局部时限检测结束,共%d 错误." % pi_count)
 
         return error_list
     except Exception as e:
@@ -250,24 +266,6 @@ def compare_list(main, must):
     # 缺失的操作集
     miss_list = [x for x in must if x not in main]
     return False, miss_list
-
-
-def time_diff(time1, time2, limit):
-    """
-    计算 两个时间差 是否在时限内
-    """
-    try:
-        assert limit > 0, "limit value error."
-        time_1_struct = datetime.strptime(time1, "%Y-%m-%d %H:%M:%S")
-        time_2_struct = datetime.strptime(time2, "%Y-%m-%d %H:%M:%S")
-        total_seconds = (time_2_struct - time_1_struct).total_seconds()
-        minutes = int(total_seconds / 60)
-        if minutes <= limit:
-            return True
-        return False
-    except Exception, e:
-        logger.error(traceback.format_exc())
-        return False
 
 
 def get_part(operate_list, part):
