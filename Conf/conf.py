@@ -34,7 +34,7 @@ listen_interval = 5
 check_rules = None
 # 监听使用,负责卷宗业务的整体超时检测
 task_map = {}
-task_map_lock = threading.Lock
+task_map_lock = threading.Lock()
 # 超时时间
 overtime = 24 * 60
 

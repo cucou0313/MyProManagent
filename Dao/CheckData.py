@@ -278,12 +278,12 @@ def get_part(operate_list, part):
         back = part[1]
         # 先找到第一个元素的所有索引
         pre_index_list = [x for x in range(len(operate_list)) if operate_list[x] == pre]
-        print "pre_index_list", pre_index_list
+        # print "pre_index_list", pre_index_list
         if len(pre_index_list) == 0:
             return res
         # 末尾追加None,表示最后一次查找到列表尾巴
         pre_index_list.append(None)
-        print "pre_index_list append", pre_index_list
+        # print "pre_index_list append", pre_index_list
         for i in range(len(pre_index_list) - 1):
             index1 = pre_index_list[i]
             index2 = pre_index_list[i + 1]

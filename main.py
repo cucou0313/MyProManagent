@@ -14,11 +14,11 @@ from Dao.RuleInit import rules_init
 from api import flask_run
 
 if __name__ == '__main__':
-    # p = threading.Thread(target=listen_data)
-    # p.start()
-    conf.check_rules = rules_init()
-    conf.task_queue.put("76408b1b-1d87-4d2f-bc25-7930a5057307")
-    tasks_assign()
-
+    p = threading.Thread(target=tasks_assign)
+    p.start()
     # conf.check_rules = rules_init()
-    # flask_run(host="0.0.0.0", port=12306)
+    # conf.task_queue.put("76408b1b-1d87-4d2f-bc25-7930a5057307")
+    # tasks_assign()
+
+    conf.check_rules = rules_init()
+    flask_run(host="0.0.0.0", port=12306)

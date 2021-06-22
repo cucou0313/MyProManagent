@@ -5,10 +5,13 @@ Author: guokaikuo
 Create time: 2021-05-27 10:44
 IDE: PyCharm
 """
+import json
 import random
 import time
 import traceback
 import uuid
+
+import requests
 
 from Models.MyModel import DBSession, OperateLog, User, OperateType, CheckRule, RuleType
 
@@ -182,10 +185,19 @@ def create_log(event):
         # file_id = ""
         val = (task_id, log_id, operate_type, datetime, user_id, file_id)
         try:
-            new_data = OperateLog(task_id=task_id, log_id=log_id, file_id=file_id, type=operate_type, user_id=user_id,
-                                  datetime=datetime)
-            session.add(new_data)
-            session.commit()
+            # new_data = OperateLog(task_id=task_id, log_id=log_id, file_id=file_id, type=operate_type, user_id=user_id,
+            #                       datetime=datetime)
+            # session.add(new_data)
+            # session.commit()
+            data = {
+                "task_id": task_id,
+                "log_id": log_id,
+                "file_id": file_id,
+                "type": operate_type,
+                "user_id": user_id,
+                "datetime": datetime,
+            }
+            http_post(data)
             time.sleep(random.randint(1, 3))
         except Exception as e:
             print traceback.format_exc()
@@ -310,6 +322,16 @@ def build_rule_json(arg):
         "partial_time": arg.get("partial_time", 0),
         "datetime": arg.get("datetime", time.strftime("%Y-%m-%d %H:%M:%S")),
     }
+
+
+def http_post(data):
+    if isinstance(data, dict):
+        datas = {
+            "data": [data]
+        }
+        url = "http://127.0.0.1:12306/save_log"
+        res = requests.post(url=url, json=datas)
+        print res.json()
 
 
 if __name__ == '__main__':
