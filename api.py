@@ -5,6 +5,7 @@ Author: guokaikuo
 Create time: 2021-05-31 18:16
 IDE: PyCharm
 """
+import json
 import time
 import traceback
 
@@ -14,7 +15,8 @@ from Conf import conf
 from Dao.RuleInit import rules_init
 from utils.mylogger import get_logger
 from Dao.ListenData import log_parse
-from Models.MyModel import DBSession, CheckRule
+from Models.MyModel import DBSession, CheckRule, CheckRes
+from flask_paginate import get_page_parameter
 
 logger = get_logger("api")
 
@@ -148,6 +150,41 @@ def rules():
         traceback.print_exc()
         logger.error(traceback.format_exc())
         return {"errMsg": str(e), "errCode": 1}
+
+
+# ------------------结果显示------------------
+@app.route('/check_res', methods=['GET'])
+def check_res():
+    PER_PAGE = 10  # 每页的结果数量
+    page = request.args.get('page', 1)  # 获取页码，默认为第一页
+    print page
+    total = session.query(CheckRes).count()  # 总共的结果数量
+    start = (page - 1) * PER_PAGE
+    end = start + PER_PAGE
+    # pagination = Pagination()
+    # res = session.query(CheckRes).group_by(CheckRes.task_id).all()
+    # res = session.query(CheckRes).all()
+    res = session.query(CheckRes).order_by(CheckRes.datetime.desc()).slice(start, end)
+    # res = session.query(CheckRes).group_by(CheckRes.task_id).slice(start, end)
+
+    print res[0].datetime
+
+    data = []
+    for x in res:
+        log = {
+            "内容": x.content,
+            "时间": str(x.datetime),
+            "卷宗ID": x.task_id,
+            "日志位置": x.operate_log_id,
+            "原始日志": x.operate_log.to_dict()
+        }
+        data.append(log)
+
+    return {
+        "msg": "get check result success.",
+        "errCode": 0,
+        "data": data
+    }
 
 
 def flask_run(host, port, debug=True):
